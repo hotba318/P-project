@@ -8,15 +8,15 @@ from ultralytics import YOLO
 from roboflow import Roboflow
 
 # ==============================================================
-# [설정] 기본 경로 및 API 키
+# [설정] 1. 전역 설정 및 경로 변수 (Global Variables)
 # ==============================================================
 ROBOFLOW_API_KEY = "7QLEWkuCXDEO1IV0ccst"
 
-# 프로젝트 루트 경로 설정
+# 프로젝트 루트 및 현재 경로 설정
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-ROOT_DIR = os.path.dirname(CURRENT_DIR)  # ~/yolo/
+ROOT_DIR = os.path.dirname(CURRENT_DIR)  # 예: ~/yolo/
 
-# 폴더 경로 정의
+# 폴더 경로 정의 (DIRS)
 DIRS = {
     "data": os.path.join(ROOT_DIR, "data"),
     "configs": os.path.join(ROOT_DIR, "configs"),
@@ -25,11 +25,11 @@ DIRS = {
     "logs": os.path.join(ROOT_DIR, "logs"),
 }
 
-# 폴더 생성
+# 폴더 자동 생성
 for key, path in DIRS.items():
     os.makedirs(path, exist_ok=True)
 
-# 로거 설정
+# 로거(Logger) 설정
 log_file_path = os.path.join(DIRS["logs"], "train.log")
 logging.basicConfig(
     level=logging.INFO,
@@ -41,36 +41,43 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+# ==============================================================
+# [함수] 2. 데이터셋 및 설정 함수 (setup_dataset_and_config)
+# ==============================================================
 def setup_dataset_and_config(project_id, version_num):
     """
     Roboflow에서 데이터셋을 다운로드하고, 경로를 수정한 yaml 파일을 생성합니다.
+    설계서 변수: rf, project, version, dataset, origin_yaml_path, new_yaml_path, data_conf
     """
     try:
+        # Roboflow 객체 초기화
         rf = Roboflow(api_key=ROBOFLOW_API_KEY)
         project = rf.workspace("hotba318").project(project_id)
         version = project.version(version_num)
         
-        # data 폴더에 다운로드
+        # 데이터셋 다운로드 (data 폴더)
         dataset = version.download("yolov8", location=DIRS["data"])
         logger.info(f"데이터셋 다운로드 완료: {dataset.location}")
 
-        # 원본 yaml 읽기
+        # 원본 yaml 파일 경로 (origin_yaml_path)
         origin_yaml_path = os.path.join(dataset.location, "data.yaml")
+        
         if not os.path.exists(origin_yaml_path):
-             # 가끔 폴더 구조가 다를 경우를 대비한 체크
              logger.error(f"data.yaml 파일을 찾을 수 없습니다: {origin_yaml_path}")
              raise FileNotFoundError("data.yaml not found")
 
+        # yaml 파일 로드 (data_conf)
         with open(origin_yaml_path, 'r') as f:
             data_conf = yaml.safe_load(f)
 
-        # 경로 수정 (절대 경로)
+        # 경로 수정 (절대 경로로 변경)
         data_conf['path'] = dataset.location
         data_conf['train'] = "train/images"
         data_conf['val'] = "val/images"
         data_conf['test'] = "test/images"
 
-        # configs/data.yaml로 저장
+        # 새로운 yaml 저장 (new_yaml_path)
         new_yaml_path = os.path.join(DIRS["configs"], "data.yaml")
         with open(new_yaml_path, 'w') as f:
             yaml.dump(data_conf, f)
@@ -82,21 +89,29 @@ def setup_dataset_and_config(project_id, version_num):
         logger.error(f"데이터셋 설정 실패: {e}")
         raise e
 
+
+# ==============================================================
+# [함수] 3. 학습 프로세스 함수 (train_process)
+# ==============================================================
 def train_process(project_id, version_num, run_name):
+    """
+    모델 학습 전체 프로세스를 수행합니다.
+    설계서 변수: device, data_yaml_path, model, epochs, imgsz, batch, workers, save_dir 등
+    """
     logger.info(f"{'='*30}")
-    logger.info(f"학습 프로세스 시작: {project_id}")
+    logger.info(f"학습 프로세스 시작: {project_id} (Version: {version_num})")
     logger.info(f"{'='*30}")
 
-    # 1. GPU 확인
-    # 코드에서는 '0'으로 설정하지만, 실제 물리적 GPU는 터미널 실행 시 CUDA_VISIBLE_DEVICES로 제어 권장
+    # 1. 학습 장치 설정 (device)
     device = '0' if torch.cuda.is_available() else 'cpu'
     logger.info(f"학습 장치 설정: {device} (torch version: {torch.__version__})")
 
-    # 2. 데이터셋 준비
+    # 2. 데이터셋 준비 (data_yaml_path)
     data_yaml_path = setup_dataset_and_config(project_id, version_num)
 
-    # 3. 모델 로딩
-    model_path = os.path.join(ROOT_DIR, 'yolov8s.pt') # 로컬에 있으면 그거 사용
+    # 3. 모델 로딩 (model, model_path)
+    model_path = os.path.join(ROOT_DIR, 'yolov8s.pt')
+    
     if os.path.exists(model_path):
         logger.info(f"로컬 모델 파일 로드: {model_path}")
         model = YOLO(model_path)
@@ -104,25 +119,29 @@ def train_process(project_id, version_num, run_name):
         logger.info("모델 다운로드 및 로드 (yolov8s.pt)...")
         model = YOLO('yolov8s.pt') 
 
-    # 4. 학습 시작
-    logger.info("학습 시작...")
+    # 4. 학습 파라미터 설정 (설계서 명칭 표준안 반영)
+    epochs = 30
+    imgsz = 640
+    batch = 16
+    workers = 4  # 학교 서버 메모리 이슈 방지용
+
+    # 5. 학습 시작
+    logger.info(f"학습 시작 (Epochs: {epochs}, Batch: {batch})...")
     
-    # model.train()은 학습 결과를 객체로 반환하지 않음 (Ultralytics 버전에 따라 다름),
-    # 하지만 model 객체 내부 상태가 업데이트됨.
     model.train(
         data=data_yaml_path,
-        epochs=30,
-        imgsz=640,
+        epochs=epochs,
+        imgsz=imgsz,
         project=os.path.join(DIRS["runs"], "detect"),
         name=run_name,
-        exist_ok=True,    # 주의: True면 exp1 폴더에 덮어씁니다. 기록 보존이 필요하면 False로 하세요.
+        exist_ok=True,    # 덮어쓰기 허용 (실험 관리에 따라 False 권장)
         device=device,
-        workers=4,        # [수정] 학교 서버 공유메모리 부족 방지 (8 -> 4)
-        batch=16          # [참고] 메모리 부족 시 8로 줄이세요
+        workers=workers,
+        batch=batch
     )
     
-    # 5. 결과 파일 찾기 및 이동 (동적 경로 처리)
-    # model.trainer.save_dir : 실제 학습 결과가 저장된 경로 (예: runs/detect/exp2)
+    # 6. 결과 파일 처리 (save_dir, src_best_model, dst_best_model)
+    # model.trainer.save_dir는 PosixPath 객체일 수 있으므로 문자열 변환
     save_dir = str(model.trainer.save_dir)
     logger.info(f"실제 저장된 경로: {save_dir}")
 
@@ -135,10 +154,11 @@ def train_process(project_id, version_num, run_name):
     else:
         logger.warning(f"모델 파일을 찾을 수 없습니다: {src_best_model}")
 
-    # 6. 성능 평가 로그
+    # 7. 성능 평가 및 로그 (metrics)
     logger.info("\n모델 성능 평가 중...")
     try:
         metrics = model.val(data=data_yaml_path)
+        
         performance_msg = f"""
         [학습 완료] 결과 요약
         -----------------------------------
@@ -148,6 +168,7 @@ def train_process(project_id, version_num, run_name):
         """
         logger.info(performance_msg)
         print(performance_msg)
+        
     except Exception as e:
         logger.error(f"성능 평가 중 오류 발생: {e}")
 
@@ -156,7 +177,7 @@ def train_process(project_id, version_num, run_name):
 # ==============================================================
 if __name__ == "__main__":
     try:
-        # 프로젝트 ID와 버전은 본인 상황에 맞게 수정
+        # 설계서 기준 파라미터 입력
         train_process("test-2k1ir", 1, "exp1")
     except Exception as e:
         logger.error(f"Critical Error: {e}")
